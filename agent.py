@@ -50,31 +50,35 @@ def generate_script(topic):
     """
     max_retries = 5
 
-for attempt in range(max_retries):
-    try:
-        response = gemini_client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-            config={"response_mime_type": "application/json"}
+    for attempt in range(max_retries):
+      try:
+        response = 
+  gemini_client.models.generate_content(
+           model=GEMINI_MODEL,
+           contents=prompt,
+           config={"response_mime_type": 
+ "application/json"}
         )
         break
 
-    except errors.ServerError as e:
+      except errors.ServerError as e:
         if getattr(e, "code", None) == 503:
-            if attempt == max_retries - 1:
-                raise
+           if attempt == max_retries - 1:
+              raise
 
-            wait_time = 10 * (2 ** attempt)
-            print(
-                f"Gemini sedang penuh (503). "
-                f"Percobaan {attempt + 1}/{max_retries}. "
-                f"Menunggu {wait_time} detik..."
+           wait_time = 10 * (2 ** attempt)
+            
+           print(
+              f"Gemini sedang penuh (503). "
+              f"Percobaan {attempt + 1}/
+   {max_retries}. "
+              f"Menunggu {wait_time} detik..."
             )
             time.sleep(wait_time)
-        else:
-            raise
+         else:
+           raise
 
-    return json.loads(response.text)
+   return json.loads(response.text)
 
 # 3. Generate Voiceover
 
