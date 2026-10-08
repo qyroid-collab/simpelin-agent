@@ -10,7 +10,7 @@ gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 notion = Client(auth=os.getenv("NOTION_TOKEN"))
 NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
 
-GEMINI_MODEL = "gemini-flash"
+GEMINI_MODEL = "gemini-3.8-flash"
 
 # 1. Radar Tren
 def get_trending_topic():
@@ -47,10 +47,10 @@ def generate_script(topic):
     }}
     """
     response = gemini_client.models.generate_content(
-        model="models/gemini-1.5-flash",
-        contents=prompt,
-        config={"response_mime_type": "application/json"}
-    )
+    model=GEMINI_MODEL,
+    contents=prompt,
+    config={"response_mime_type": "application/json"}
+)
 
     return json.loads(response.text)
 
