@@ -1,3 +1,4 @@
+import json
 import os
 import asyncio
 import feedparser
@@ -45,17 +46,12 @@ def generate_script(topic):
         "caption": "Isi caption dan hashtag..."
     }}
     """
-
-response = gemini_client.models.generate_content(
-    model=GEMINI_MODEL,
-    contents=prompt,
-    config={"response_mime_type": "application/json"}
-)
-
-    import json
+    response = gemini_client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=prompt,
+        config={"response_mime_type": "application/json"}
+    )
     return json.loads(response.text)
-
-
 # 3. Generate Voiceover
 async def generate_vo(text, output_file="vo.mp3"):
     communicate = edge_tts.Communicate(text, "id-ID-ArdiNeural")
