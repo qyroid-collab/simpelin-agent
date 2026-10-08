@@ -46,13 +46,16 @@ def generate_script(topic):
         "caption": "Isi caption dan hashtag..."
     }}
     """
-response = gemini_client.models.generate_content(
-    model="models/gemini-1.5-flash",
-    contents=prompt,
-    config={"response_mime_type": "application/json"}
-)
+    response = gemini_client.models.generate_content(
+        model="models/gemini-1.5-flash",
+        contents=prompt,
+        config={"response_mime_type": "application/json"}
+    )
+
     return json.loads(response.text)
+
 # 3. Generate Voiceover
+
 async def generate_vo(text, output_file="vo.mp3"):
     communicate = edge_tts.Communicate(text, "id-ID-ArdiNeural")
     await communicate.save(output_file)
