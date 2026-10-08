@@ -3,6 +3,8 @@ import os
 import asyncio
 import feedparser
 import edge_tts
+import time
+from google.genai import errors
 from google import genai
 from notion_client import Client
 # Inisialisasi Client
@@ -46,11 +48,31 @@ def generate_script(topic):
         "caption": "Isi caption dan hashtag..."
     }}
     """
-    response = gemini_client.models.generate_content(
-    model=GEMINI_MODEL,
-    contents=prompt,
-    config={"response_mime_type": "application/json"}
-)
+    max_retries = 5
+
+for attempt in range(max_retries):
+    try:
+        response = gemini_client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config={"response_mime_type": "application/json"}
+        )
+        break
+
+    except errors.ServerError as e:
+        if getattr(e, "code", None) == 503:
+            if attempt == max_retries - 1:
+                raise
+
+            wait_time = 10 * (2 ** attempt)
+            print(
+                f"Gemini sedang penuh (503). "
+                f"Percobaan {attempt + 1}/{max_retries}. "
+                f"Menunggu {wait_time} detik..."
+            )
+            time.sleep(wait_time)
+        else:
+            raise
 
     return json.loads(response.text)
 
