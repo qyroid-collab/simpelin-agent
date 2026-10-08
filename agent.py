@@ -29,10 +29,10 @@ def generate_script(topic):
     Topik: {topic['title']}
     Sumber: {topic['link']}
 
-    Buat naskah video pendek (maksimal 60 detik / ~130 kata) dengan gaya Simpelin:
-    - Santai tapi tajam, kalimat pendek, tanpa kata kaku AI.
-    - Struktur: Hook (1 kalimat) -> Inti Masalah -> Kenapa Terjadi -> Dampaknya -> Penutup.
-    - Pilih Pilar Topik: Kebijakan & Pemerintah / Ekonomi & Harga / Kejadian Daerah / Viral & Konteks / Bisnis & Tech.
+    Buat naskah video pendek (maksimal 60 detik / ~130 kata):
+    - Santai tapi tajam, kalimat pendek, tanpa kata kaku.
+    - Struktur: Hook (1 kalimat) -> Inti Masalah -> Kenapa Penting -> Solusi/Aksi.
+    - Pilih Pilar Topik: Kebijakan & Pemerintah / Ekonomi Digital / Bisnis Local.
     - Buat Fact-Check ringkas (KNOWN/INFERRED/NEEDS RESEARCH).
     - Buat Caption + Hashtag siap pakai.
 
@@ -44,16 +44,16 @@ def generate_script(topic):
         "caption": "Isi caption dan hashtag..."
     }}
     """
-    
-    response = gemini_client.models.generate_content(
-    model="gemini-2.0-flash",
-    contents=prompt,
-    config={"response_mime_type": "application/json"}
-)
 
+    response = gemini_client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=prompt,
+        config={"response_mime_type": "application/json"}
     )
+
     import json
     return json.loads(response.text)
+
 
 # 3. Generate Voiceover
 async def generate_vo(text, output_file="vo.mp3"):
