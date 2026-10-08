@@ -46,7 +46,7 @@ def generate_script(topic):
     """
     
     response = gemini_client.models.generate_content(
-        "gemini-1.5-flash",
+        "gemini-2.0-flash",
         contents=prompt,
         config={"response_mime_type": "application/json"}
     )
