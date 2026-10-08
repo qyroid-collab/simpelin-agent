@@ -4,11 +4,12 @@ import feedparser
 import edge_tts
 from google import genai
 from notion_client import Client
-
 # Inisialisasi Client
 gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 notion = Client(auth=os.getenv("NOTION_TOKEN"))
 NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
+
+GEMINI_MODEL = "gemini-flash"
 
 # 1. Radar Tren
 def get_trending_topic():
@@ -45,11 +46,11 @@ def generate_script(topic):
     }}
     """
 
-    response = gemini_client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=prompt,
-        config={"response_mime_type": "application/json"}
-    )
+response = gemini_client.models.generate_content(
+    model=GEMINI_MODEL,
+    contents=prompt,
+    config={"response_mime_type": "application/json"}
+)
 
     import json
     return json.loads(response.text)
