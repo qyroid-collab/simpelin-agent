@@ -1,20 +1,38 @@
+import asyncio
 import json
 import os
-import asyncio
 import time
+from pathlib import Path
 
-import feedparser
 import edge_tts
+import feedparser
 from google import genai
 from google.genai import errors
 from notion_client import Client
 
 
-# =========================
+# ==========================================
 # KONFIGURASI
-# =========================
+# ==========================================
 
-gemini_client = genai.Client(
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+NOTION_DATA_SOURCE_ID = os.getenv("NOTION_DATABASE_ID")
+VOICE = os.getenv("EDGE_TTS_VOICE", "id-ID-ArdiNeural")
+AUDIO_FILE = "vo.mp3"
+
+REQUIRED_SECRETS = (
+    "GEMINI_API_KEY",
+    "NOTION_TOKEN",
+    "NOTION_DATABASE_ID",
+)
+
+for secret in REQUIRED_SECRETS:
+    if not os.getenv(secret):
+        raise RuntimeError(
+            f"GitHub Secret {secret} belum diatur."
+        )
+
+gemini = genai.Client(
     api_key=os.getenv("GEMINI_API_KEY")
 )
 
@@ -22,263 +40,372 @@ notion = Client(
     auth=os.getenv("NOTION_TOKEN")
 )
 
-NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
+VALID_PILARS = {
+    "Kebijakan & Pemerintah",
+    "Ekonomi & Harga",
+    "Kejadian Daerah",
+    "Viral & Konteks",
+    "Bisnis & Tech",
+    "Fact Check & Sumber",
+    "Ekonomi Digital",
+    "Bisnis Lokal",
+}
 
-GEMINI_MODEL = "gemini-3.8-flash"
 
-
-# =========================
-# 1. RADAR TREN
-# =========================
+# ==========================================
+# 1. RADAR TREN GOOGLE
+# ==========================================
 
 def get_trending_topic():
-    feed_url = "https://trends.google.com/trending/rss?geo=ID"
+    feed_url = (
+        "https://trends.google.com/trending/rss?geo=ID"
+    )
 
     feed = feedparser.parse(feed_url)
 
-    if feed.entries:
-        first_entry = feed.entries[0]
+    for entry in getattr(feed, "entries", []):
+        title = getattr(entry, "title", "").strip()
+        link = getattr(entry, "link", "").strip()
 
-        return {
-            "title": first_entry.title,
-            "link": first_entry.link
-        }
+        if title:
+            return {
+                "title": title[:200],
+                "link": link or (
+                    "https://trends.google.com/trending?geo=ID"
+                ),
+            }
 
-    return {
-        "title": "Update Ekonomi Digital Indonesia",
-        "link": "https://bps.go.id"
-    }
+    raise RuntimeError(
+        "Google Trends RSS kosong atau gagal diakses. "
+        "Agent dihentikan agar tidak membuat topik palsu."
+    )
 
 
-# =========================
-# 2. GENERATOR NASKAH
-# =========================
+# ==========================================
+# 2. GENERATOR NASKAH GEMINI
+# ==========================================
 
 def generate_script(topic):
-
     prompt = f"""
-Kamu adalah pembuat konten akun berita & edukasi "Simpelin".
+Kamu adalah editor konten berita dan edukasi Indonesia
+untuk akun Simpelin.
 
-Topik: {topic['title']}
-Sumber: {topic['link']}
+TOPIK TREN:
+{topic["title"]}
 
-Buat naskah video pendek maksimal 60 detik atau sekitar 130 kata.
+TAUTAN TREN:
+{topic["link"]}
 
-Aturan:
-- Santai tapi tajam.
-- Gunakan kalimat pendek.
-- Jangan menggunakan bahasa yang kaku.
-- Struktur: Hook -> Inti Masalah -> Kenapa Penting -> Solusi/Aksi.
-- Pilih satu Pilar Topik:
-  1. Kebijakan & Pemerintah
-  2. Ekonomi Digital
-  3. Bisnis Lokal
-- Buat Fact-Check ringkas dengan kategori:
-  KNOWN / INFERRED / NEEDS RESEARCH.
-- Buat Caption + Hashtag siap pakai.
+Buat naskah video pendek maksimal 60 detik,
+sekitar 100-130 kata.
 
-Format JSON wajib:
+GAYA:
+- Bahasa Indonesia yang santai, jelas, dan tajam.
+- Kalimat pendek dan mudah dibacakan.
+- Struktur: Hook -> Inti -> Kenapa Penting -> Aksi/Penutup.
+- Hindari clickbait yang menyesatkan.
+- Jangan mengarang fakta, angka, kutipan, atau sumber.
+- Tren bukan bukti bahwa suatu klaim benar.
+- Jika fakta belum terverifikasi, tulis NEEDS RESEARCH
+  dan jelaskan apa yang masih perlu diverifikasi.
 
+Pilih satu pilar:
+1. Kebijakan & Pemerintah
+2. Ekonomi Digital
+3. Bisnis Lokal
+
+Kembalikan JSON valid dengan empat field:
 {{
-    "pilar": "Nama Pilar",
-    "fact_check": "Ringkasan verifikasi...",
-    "naskah": "Isi naskah utuh...",
-    "caption": "Isi caption dan hashtag..."
+  "pilar": "Nama pilar",
+  "fact_check": "Status dan catatan verifikasi",
+  "naskah": "Naskah lengkap video",
+  "caption": "Caption dan hashtag"
 }}
 """
 
-    max_retries = 5
+    response = None
 
-    for attempt in range(max_retries):
-
+    for attempt in range(5):
         try:
-
-            response = gemini_client.models.generate_content(
+            response = gemini.models.generate_content(
                 model=GEMINI_MODEL,
                 contents=prompt,
                 config={
                     "response_mime_type": "application/json"
-                }
+                },
             )
-
             break
 
-        except errors.ServerError as e:
-
-            if getattr(e, "code", None) == 503:
-
-                if attempt == max_retries - 1:
-                    raise
-
-                wait_time = 10 * (2 ** attempt)
-
-                print(
-                    f"Gemini sedang penuh (503). "
-                    f"Percobaan {attempt + 1}/{max_retries}. "
-                    f"Menunggu {wait_time} detik..."
-                )
-
-                time.sleep(wait_time)
-
-            else:
+        except errors.ServerError as exc:
+            if (
+                getattr(exc, "code", None) != 503
+                or attempt == 4
+            ):
                 raise
 
-    return json.loads(response.text)
+            delay = min(10 * (2 ** attempt), 60)
 
+            print(
+                f"Gemini sedang sibuk. "
+                f"Percobaan {attempt + 1}/5, "
+                f"menunggu {delay} detik."
+            )
 
-# =========================
-# 3. GENERATE VOICEOVER
-# =========================
+            time.sleep(delay)
 
-async def generate_vo(text, output_file="vo.mp3"):
+    if not response or not response.text:
+        raise RuntimeError(
+            "Gemini tidak mengembalikan respons."
+        )
 
-    communicate = edge_tts.Communicate(
-        text,
-        "id-ID-ArdiNeural"
+    try:
+        data = json.loads(response.text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            "Respons Gemini bukan JSON valid."
+        ) from exc
+
+    required_fields = (
+        "pilar",
+        "fact_check",
+        "naskah",
+        "caption",
     )
 
-    await communicate.save(output_file)
+    for field in required_fields:
+        if (
+            not isinstance(data.get(field), str)
+            or not data[field].strip()
+        ):
+            raise ValueError(
+                f"Field '{field}' kosong atau tidak valid."
+            )
+
+    # Sesuaikan nama pilar dengan opsi di Notion.
+    pillar_map = {
+        "Kebijakan & Pemerintah":
+            "Kebijakan & Pemerintah",
+        "Ekonomi Digital":
+            "Ekonomi Digital",
+        "Bisnis Lokal":
+            "Bisnis Lokal",
+    }
+
+    data["pilar"] = pillar_map.get(
+        data["pilar"],
+        "Viral & Konteks",
+    )
+
+    if data["pilar"] not in VALID_PILARS:
+        data["pilar"] = "Viral & Konteks"
+
+    return data
 
 
-# =========================
-# 4. PUSH KE NOTION
-# =========================
+# ==========================================
+# 3. GENERATOR VOICEOVER
+# ==========================================
 
-def push_to_notion(topic_title, data):
+async def generate_vo(
+    text,
+    output_file=AUDIO_FILE,
+):
+    await edge_tts.Communicate(
+        text,
+        VOICE,
+    ).save(output_file)
 
-    notion.pages.create(
+    path = Path(output_file)
 
+    if not path.exists() or path.stat().st_size == 0:
+        raise RuntimeError(
+            "Voiceover gagal dibuat atau file kosong."
+        )
+
+    print(
+        f"Voiceover berhasil dibuat: {path} "
+        f"({path.stat().st_size} bytes)"
+    )
+
+    return path
+
+
+# ==========================================
+# 4. FORMAT TEKS UNTUK NOTION
+# ==========================================
+
+def notion_rich_text(value):
+    """
+    Notion membatasi satu objek teks hingga 2.000 karakter.
+    Teks panjang dibagi menjadi beberapa bagian.
+    """
+    value = str(value or "")
+
+    chunks = [
+        value[i:i + 1900]
+        for i in range(0, len(value), 1900)
+    ]
+
+    if not chunks:
+        chunks = [""]
+
+    return [
+        {
+            "type": "text",
+            "text": {
+                "content": chunk,
+            },
+        }
+        for chunk in chunks
+    ]
+
+
+# ==========================================
+# 5. KIRIM KONTEN KE NOTION
+# ==========================================
+
+def push_to_notion(topic, data):
+    fact_check_text = (
+        f'{data["fact_check"]}\n\n'
+        f'Sumber tren awal: {topic["link"]}\n\n'
+        "Catatan: tren menunjukkan popularitas topik, "
+        "bukan bukti kebenaran informasi."
+    )
+
+    page = notion.pages.create(
         parent={
-            "database_id": NOTION_DATABASE_ID
+            "data_source_id": NOTION_DATA_SOURCE_ID
         },
 
         properties={
-
             "Topik / Judul": {
                 "title": [
                     {
+                        "type": "text",
                         "text": {
-                            "content": topic_title
-                        }
+                            "content": topic["title"][:2000]
+                        },
                     }
                 ]
             },
 
             "Status": {
-                "status": {
-                    "name": "2. Menunggu Approve"
+                "select": {
+                    "name": "Menunggu Approve"
                 }
             },
 
             "Pilar Topik": {
                 "select": {
-                    "name": data.get(
-                        "pilar",
-                        "Viral & Konteks"
-                    )
+                    "name": data["pilar"]
                 }
             },
 
             "Fact Check & Sumber": {
-                "rich_text": [
-                    {
-                        "text": {
-                            "content": data.get(
-                                "fact_check",
-                                ""
-                            )
-                        }
-                    }
-                ]
+                "rich_text": notion_rich_text(
+                    fact_check_text
+                )
             },
 
             "Paket Caption & Hashtag": {
-                "rich_text": [
-                    {
-                        "text": {
-                            "content": data.get(
-                                "caption",
-                                ""
-                            )
-                        }
-                    }
-                ]
-            }
+                "rich_text": notion_rich_text(
+                    data["caption"]
+                )
+            },
+
+            "Tipe": {
+                "rich_text": notion_rich_text(
+                    "Video pendek"
+                )
+            },
         },
 
         children=[
-
             {
                 "object": "block",
                 "type": "heading_2",
                 "heading_2": {
-                    "rich_text": [
-                        {
-                            "text": {
-                                "content": "Draft Naskah Simpelin"
-                            }
-                        }
-                    ]
-                }
+                    "rich_text": notion_rich_text(
+                        "Draft Naskah Simpelin"
+                    )
+                },
             },
 
             {
                 "object": "block",
                 "type": "paragraph",
                 "paragraph": {
-                    "rich_text": [
-                        {
-                            "text": {
-                                "content": data.get(
-                                    "naskah",
-                                    ""
-                                )
-                            }
-                        }
-                    ]
-                }
-            }
-        ]
+                    "rich_text": notion_rich_text(
+                        data["naskah"]
+                    )
+                },
+            },
+
+            {
+                "object": "block",
+                "type": "heading_2",
+                "heading_2": {
+                    "rich_text": notion_rich_text(
+                        "Informasi Voiceover"
+                    )
+                },
+            },
+
+            {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": notion_rich_text(
+                        "File vo.mp3 dibuat oleh workflow "
+                        "GitHub Actions. Unduh file dari "
+                        "artifact workflow jika artifact "
+                        "audio sudah dikonfigurasi."
+                    )
+                },
+            },
+        ],
     )
 
+    print(
+        "Konten berhasil dikirim ke Notion: "
+        f'{page.get("url", "(URL tidak tersedia)")}'
+    )
 
-# =========================
-# 5. MAIN PROGRAM
-# =========================
+    return page
+
+
+# ==========================================
+# 6. PROGRAM UTAMA
+# ==========================================
 
 async def main():
-
-    print("Memulai Simpelin Agent...")
+    print("================================")
+    print("Memulai Simpelin Agent")
+    print("================================")
 
     topic = get_trending_topic()
 
-    print(
-        f"Topik ditemukan: {topic['title']}"
-    )
+    print(f"Topik ditemukan: {topic['title']}")
+    print(f"Sumber tren: {topic['link']}")
 
     script_data = generate_script(topic)
 
-    print("Naskah berhasil dibuat oleh Gemini.")
+    print("Naskah, fact-check, dan caption dibuat.")
 
     await generate_vo(
-        script_data["naskah"]
+        script_data["naskah"],
+        AUDIO_FILE,
     )
-
-    print("Voiceover berhasil dibuat.")
 
     push_to_notion(
-        topic["title"],
-        script_data
+        topic,
+        script_data,
     )
 
-    print("Data berhasil dikirim ke Notion.")
-
+    print("================================")
     print("Simpelin Agent selesai.")
+    print("================================")
 
-
-# =========================
-# 6. JALANKAN PROGRAM
-# =========================
 
 if __name__ == "__main__":
     asyncio.run(main())
